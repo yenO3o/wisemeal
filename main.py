@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 import models
 import schemas
@@ -26,8 +27,8 @@ app.add_middleware(
 )
 
 @app.get("/")
-def read_root():
-    return {"message": "太棒了！你的 Wisemeal 後端伺服器已經成功運行中！🚀"}
+def serve_frontend():
+    return FileResponse("index.html")
 
 @app.post("/api/auth/register", response_model=schemas.User, tags=["Authentication"])
 def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
