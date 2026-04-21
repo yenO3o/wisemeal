@@ -14,7 +14,8 @@ import os
 import json
 import re
 from typing import List
-import google.generativeai as genai
+import base64
+import requests as http_requests
 
 # 啟動時，自動在資料庫中建立我們在 models.py 定義好的所有資料表
 models.Base.metadata.create_all(bind=engine)
@@ -188,11 +189,14 @@ def delete_food_log_item(
     db.commit()
     return None
 
-PROMPT_FOOD = """你是專業營養師，請分析這張圖片中的食物。
-只回傳以下 JSON，不要多餘文字或 markdown：
-{"food_name":"食物名稱（繁體中文，具體描述）","calories":整數,"protein":小數,"carbs":小數,"fat":小數}
-calories 單位：大卡；protein/carbs/fat 單位：公克。
-若圖中有多樣食物，估算整體份量。無法辨識時 food_name 填「無法辨識」，數值填 0。"""
+GEMINI_PROMPT = (
+    "你是專業營養師，請分析這張圖片中的食物。"
+    "只回傳以下 JSON，不要多餘文字或 markdown：\n"
+    '{"food_name":"食物名稱（繁體中文，具體描述）","calories":整數,"protein":小數,"carbs":小數,"fat":小數}\n'
+    "calories 單位：大卡；protein/carbs/fat 單位：公克。"
+    "若圖中有多樣食物，估算整體份量。無法辨識時 food_name 填「無法辨識」，數值填 0。"
+)
+GEMINI_MODEL = "gemini-1.5-flash-8b"
 
 @app.post("/api/ai/analyze-food-image", response_model=schemas.FoodAnalysisResponse, tags=["AI Features"])
 async def analyze_food_image(
@@ -212,19 +216,38 @@ async def analyze_food_image(
     if mime_type not in ("image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"):
         mime_type = "image/jpeg"
 
+    url = (
+        f"https://generativelanguage.googleapis.com/v1/models/"
+        f"{GEMINI_MODEL}:generateContent?key={api_key}"
+    )
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": GEMINI_PROMPT},
+                {"inline_data": {"mime_type": mime_type, "data": base64.b64encode(image_bytes).decode()}}
+            ]
+        }],
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 300}
+    }
+
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash-8b")
-        image_part = {"mime_type": mime_type, "data": image_bytes}
-        response = model.generate_content(
-            [PROMPT_FOOD, image_part],
-            generation_config={"temperature": 0.2, "max_output_tokens": 256}
+        resp = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: http_requests.post(url, json=payload, timeout=30)
         )
 
-        text = response.text.strip()
+        if resp.status_code == 429:
+            raise HTTPException(status_code=429, detail="AI 請求次數超過免費額度，請稍後再試")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Gemini API 錯誤 {resp.status_code}：{resp.text[:200]}")
+
+        candidates = resp.json().get("candidates", [])
+        if not candidates:
+            raise HTTPException(status_code=500, detail="AI 未回傳任何結果，請重試")
+
+        text = candidates[0]["content"]["parts"][0]["text"].strip()
         text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text).strip()
 
-        # 從回應中擷取 JSON 物件（即使前後有多餘文字也能處理）
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if not match:
             raise HTTPException(status_code=500, detail=f"AI 回傳格式異常：{text[:100]}")
