@@ -915,13 +915,27 @@
                     body: formData
                 });
                 const data = await res.json();
+
+                if (!res.ok) {
+                    showToast(`❌ ${data.detail || "辨識失敗，請稍後再試"}`);
+                    return;
+                }
+                if (!data.food_name || data.food_name === "無法辨識") {
+                    showToast("⚠️ AI 無法辨識此圖片，請嘗試更清晰的食物照片");
+                    return;
+                }
+
                 document.getElementById("foodName").value = data.food_name;
-                document.getElementById("foodCalories").value = data.calories;
-                showToast("✅ AI 辨識完成！");
+                document.getElementById("foodCalories").value = data.calories || "";
+                document.getElementById("foodProtein").value = data.protein || "";
+                document.getElementById("foodCarbs").value = data.carbs || "";
+                document.getElementById("foodFat").value = data.fat || "";
+                showToast(`✅ 辨識完成：${data.food_name}`);
             } catch(e) {
-                showToast("❌ 圖片辨識失敗，請稍後再試。");
+                showToast("❌ 網路錯誤，請檢查連線後再試");
             } finally {
                 document.getElementById("aiBtnText").innerText = "📸 AI 辨識";
+                fileInput.value = "";
             }
         }
 

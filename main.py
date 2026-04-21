@@ -188,7 +188,11 @@ def delete_food_log_item(
     db.commit()
     return None
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+PROMPT_FOOD = """你是專業營養師，請分析這張圖片中的食物。
+只回傳以下 JSON，不要多餘文字或 markdown：
+{"food_name":"食物名稱（繁體中文，具體描述）","calories":整數,"protein":小數,"carbs":小數,"fat":小數}
+calories 單位：大卡；protein/carbs/fat 單位：公克。
+若圖中有多樣食物，估算整體份量。無法辨識時 food_name 填「無法辨識」，數值填 0。"""
 
 @app.post("/api/ai/analyze-food-image", response_model=schemas.FoodAnalysisResponse, tags=["AI Features"])
 async def analyze_food_image(
@@ -196,48 +200,50 @@ async def analyze_food_image(
     current_user: models.User = Depends(security.get_current_user)
 ):
     """上傳食物照片，透過 Google Gemini Vision AI 辨識食物種類與估算營養成分。"""
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=503, detail="AI 辨識功能尚未設定 API Key，請聯絡管理員")
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="AI 辨識功能尚未設定，請至後台設定 GEMINI_API_KEY")
 
     image_bytes = await file.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="圖片內容為空，請重新上傳")
+
     mime_type = file.content_type or "image/jpeg"
+    if mime_type not in ("image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"):
+        mime_type = "image/jpeg"
 
     try:
-        genai.configure(api_key=GEMINI_API_KEY)
+        genai.configure(api_key=api_key)
         model = genai.GenerativeModel("gemini-1.5-flash")
-
-        prompt = """你是一位專業的食物營養師。請仔細分析這張食物圖片，用繁體中文回傳 JSON 格式的結果。
-
-回傳格式必須嚴格如下（只回傳 JSON，不要任何其他文字或 markdown 標記）：
-{
-  "food_name": "食物完整名稱（繁體中文，盡量具體，例如：燻雞便當、牛肉拉麵）",
-  "calories": 整數（估算大卡數），
-  "protein": 小數（估算蛋白質克數），
-  "carbs": 小數（估算碳水化合物克數），
-  "fat": 小數（估算脂肪克數）
-}
-
-如果圖片中有多種食物，請估算整體總量。若無法辨識食物，food_name 填「無法辨識」，數值填 0。"""
-
         image_part = {"mime_type": mime_type, "data": image_bytes}
-        response = model.generate_content([prompt, image_part])
+        response = model.generate_content(
+            [PROMPT_FOOD, image_part],
+            generation_config={"temperature": 0.2, "max_output_tokens": 256}
+        )
 
         text = response.text.strip()
-        text = re.sub(r"```json\s*|\s*```", "", text).strip()
-        data = json.loads(text)
+        text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text).strip()
 
+        # 從回應中擷取 JSON 物件（即使前後有多餘文字也能處理）
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if not match:
+            raise HTTPException(status_code=500, detail=f"AI 回傳格式異常：{text[:100]}")
+
+        data = json.loads(match.group())
         return schemas.FoodAnalysisResponse(
-            food_name=data.get("food_name", "未知食物"),
-            calories=int(data.get("calories", 0)),
-            protein=float(data.get("protein", 0)),
-            carbs=float(data.get("carbs", 0)),
-            fat=float(data.get("fat", 0)),
+            food_name=str(data.get("food_name", "未知食物")),
+            calories=int(float(data.get("calories", 0))),
+            protein=round(float(data.get("protein", 0)), 1),
+            carbs=round(float(data.get("carbs", 0)), 1),
+            fat=round(float(data.get("fat", 0)), 1),
             confidence="high"
         )
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="AI 回傳格式錯誤，請重試")
+    except HTTPException:
+        raise
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=500, detail=f"JSON 解析失敗，請重試（{str(e)}）")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI 辨識失敗：{str(e)}")
+        raise HTTPException(status_code=500, detail=f"AI 辨識發生錯誤：{str(e)}")
 
 @app.get("/api/dashboard/{entry_date}", response_model=schemas.DashboardSummary, tags=["Dashboard"])
 def get_dashboard_summary(
