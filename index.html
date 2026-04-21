@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wisemeal</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        body { font-family: 'Noto Sans TC', sans-serif; background: #f0f4f8; }
+
+        input[type="number"]::-webkit-inner-spin-button,
+        input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+        .file-upload-wrapper { position: relative; overflow: hidden; display: inline-flex; align-items: center; cursor: pointer; }
+        .file-upload-wrapper input[type=file] { font-size: 100px; position: absolute; left: 0; top: 0; opacity: 0; cursor: pointer; }
+
+        /* 載入動畫 */
+        .loader {
+            width: 44px; height: 44px;
+            border: 4px solid #d1fae5;
+            border-top-color: #10b981;
+            border-radius: 50%;
+            animation: spin 0.9s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* 頁籤動畫 */
+        .tab-content { display: none; animation: fadeUp 0.25s ease-out; }
+        .tab-content.active { display: block; }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* 熱量進度條 */
+        .calorie-bar-track { background: rgba(255,255,255,0.25); border-radius: 999px; height: 8px; overflow: hidden; }
+        .calorie-bar-fill { height: 100%; border-radius: 999px; background: white; transition: width 0.8s cubic-bezier(.4,0,.2,1); }
+
+        /* 輸入框共用 */
+        .field {
+            width: 100%; padding: 0.75rem 1rem;
+            background: #f8fafc; border: 1.5px solid #e2e8f0;
+            border-radius: 0.875rem; outline: none;
+            transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+            font-size: 0.9375rem;
+        }
+        .field:focus { background: white; border-color: #10b981; box-shadow: 0 0 0 3px rgba(16,185,129,0.12); }
+
+        /* 卡片懸停效果 */
+        .card-hover { transition: transform 0.15s, box-shadow 0.15s; }
+        .card-hover:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.09); }
+
+        /* 巨集色彩 */
+        .macro-protein { background: linear-gradient(135deg, #eff6ff, #dbeafe); border-color: #bfdbfe; }
+        .macro-carbs   { background: linear-gradient(135deg, #fffbeb, #fef3c7); border-color: #fde68a; }
+        .macro-fat     { background: linear-gradient(135deg, #fff7ed, #fed7aa); border-color: #fdba74; }
+
+        /* 登入頁裝飾 */
+        .login-deco { background: linear-gradient(135deg, #10b981 0%, #0d9488 100%); }
+
+        /* 通知提示 */
+        .toast {
+            position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%) translateY(100px);
+            background: #1e293b; color: white; padding: 0.75rem 1.5rem;
+            border-radius: 999px; font-size: 0.875rem; font-weight: 600;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.2); z-index: 200;
+            transition: transform 0.3s cubic-bezier(.4,0,.2,1);
+            white-space: nowrap;
+        }
+        .toast.show { transform: translateX(-50%) translateY(0); }
+
+        select.field { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M7.247 11.14 2.451 5.658C1.885 5.013 2.345 4 3.204 4h9.592a1 1 0 0 1 .753 1.659l-4.796 5.48a1 1 0 0 1-1.506 0z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 1rem center; padding-right: 2.5rem; }
+
+        /* 個人資料步驟點 */
+        .step-dot { width: 8px; height: 8px; border-radius: 50%; background: #e2e8f0; transition: background 0.2s; }
+        .step-dot.active { background: #6366f1; }
+    </style>
+</head>
+<body class="text-slate-800 antialiased selection:bg-emerald-200 pb-24">
+
+    <!-- 全域載入遮罩 -->
+    <div id="globalLoader" class="fixed inset-0 bg-white z-[100] flex flex-col items-center justify-center gap-4">
+        <div class="loader"></div>
+        <p class="text-slate-400 text-sm font-medium tracking-widest">載入中...</p>
+    </div>
+
+    <!-- Toast 通知 -->
+    <div id="toast" class="toast"></div>
+
+    <!-- 頂部導覽列 -->
+    <nav class="login-deco text-white px-5 py-3.5 shadow-lg flex justify-between items-center sticky top-0 z-50">
+        <div class="flex items-center gap-2.5">
+            <div class="w-8 h-8 bg-white/20 rounded-xl flex items-center justify-center text-lg backdrop-blur-sm">🥗</div>
+            <h1 class="text-lg font-black tracking-wider">Wisemeal</h1>
+        </div>
+        <button id="logoutBtn" class="hidden bg-white/20 backdrop-blur-md px-4 py-1.5 rounded-full text-sm font-bold hover:bg-white/30 active:scale-95 transition-all" onclick="logout()">登出</button>
+    </nav>
+
+    <!-- Hero 圖 -->
+    <div id="heroImage" class="hidden w-full h-44 bg-cover bg-center relative" style="background-image: url('https://images.unsplash.com/photo-1490645935967-10de6ba17061?auto=format&fit=crop&w=800&q=80');">
+        <div class="absolute inset-0 bg-gradient-to-t from-[#f0f4f8] via-[#f0f4f8]/30 to-transparent"></div>
+    </div>
+
+    <!-- 主容器 -->
+    <div class="max-w-lg mx-auto relative z-10 px-4">
+
+        <!-- ══════════════════ 登入區塊 ══════════════════ -->
+        <div id="loginSection" class="hidden mt-10">
+            <div class="bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-100">
+                <!-- 上方裝飾區 -->
+                <div class="login-deco px-8 pt-8 pb-10 text-white text-center relative overflow-hidden">
+                    <div class="absolute -top-8 -right-8 w-40 h-40 bg-white/10 rounded-full"></div>
+                    <div class="absolute -bottom-10 -left-10 w-32 h-32 bg-black/10 rounded-full"></div>
+                    <div class="relative z-10">
+                        <div class="inline-flex items-center justify-center w-14 h-14 bg-white/20 rounded-2xl text-3xl mb-3 backdrop-blur-sm">🥗</div>
+                        <h2 id="authTitle" class="text-2xl font-black tracking-wide">歡迎回來</h2>
+                        <p class="text-emerald-100 text-sm mt-1">開始你的健康飲食之旅</p>
+                    </div>
+                </div>
+                <!-- 表單區 -->
+                <div class="px-8 py-7">
+                    <div class="mb-4">
+                        <label class="block text-xs font-bold text-slate-500 mb-1.5 tracking-wide uppercase">信箱</label>
+                        <input type="email" id="email" placeholder="your@email.com" class="field">
+                    </div>
+                    <div class="mb-6">
+                        <label class="block text-xs font-bold text-slate-500 mb-1.5 tracking-wide uppercase">密碼</label>
+                        <input type="password" id="password" placeholder="••••••••" class="field">
+                    </div>
+                    <button id="authBtn" onclick="submitAuth()" class="w-full login-deco text-white py-3.5 rounded-2xl font-bold text-base shadow-md hover:shadow-lg hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-200">登入</button>
+                    <p id="loginError" class="text-red-500 text-sm mt-3 text-center hidden"></p>
+                    <div class="text-center mt-5">
+                        <button onclick="toggleAuthMode()" id="toggleAuthBtn" class="text-sm text-teal-600 font-semibold hover:text-teal-700 hover:underline transition-colors">還沒有帳號？點此註冊</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══════════════════ 個人檔案設定 ══════════════════ -->
+        <div id="profileSection" class="hidden mt-6">
+            <div class="bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden">
+                <!-- 標題 -->
+                <div class="px-8 pt-8 pb-6 border-b border-slate-50">
+                    <div class="flex items-center gap-3 mb-1">
+                        <div class="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center text-xl">🎯</div>
+                        <div>
+                            <h2 class="text-xl font-black text-slate-800">專屬計畫設定</h2>
+                            <p class="text-slate-400 text-xs mt-0.5">填寫基本資料，系統自動計算你的熱量目標</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="px-8 py-6 space-y-5">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">性別</label>
+                            <select id="p_gender" class="field">
+                                <option value="male">男性</option>
+                                <option value="female">女性</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">出生日期</label>
+                            <input type="date" id="p_birth" class="field" value="1995-01-01">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wide">身體數據</label>
+                        <div class="grid grid-cols-3 gap-3">
+                            <div class="bg-slate-50 rounded-2xl p-3 border border-slate-100 text-center">
+                                <p class="text-xs text-slate-400 mb-1.5">身高 (cm)</p>
+                                <input type="number" id="p_height" class="w-full bg-transparent text-center font-bold text-slate-700 text-lg outline-none placeholder:text-slate-300" placeholder="170">
+                            </div>
+                            <div class="bg-emerald-50 rounded-2xl p-3 border border-emerald-100 text-center">
+                                <p class="text-xs text-emerald-500 mb-1.5">目前 (kg)</p>
+                                <input type="number" id="p_weight" class="w-full bg-transparent text-center font-bold text-slate-700 text-lg outline-none placeholder:text-slate-300" placeholder="70">
+                            </div>
+                            <div class="bg-indigo-50 rounded-2xl p-3 border border-indigo-100 text-center">
+                                <p class="text-xs text-indigo-400 mb-1.5">目標 (kg)</p>
+                                <input type="number" id="p_target" class="w-full bg-transparent text-center font-bold text-slate-700 text-lg outline-none placeholder:text-slate-300" placeholder="65">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">活動程度</label>
+                        <select id="p_activity" class="field">
+                            <option value="sedentary">🪑 久坐（辦公室族，幾乎不運動）</option>
+                            <option value="light">🚶 輕度活動（每週運動 1-3 天）</option>
+                            <option value="moderate">🏃 中度活動（每週運動 3-5 天）</option>
+                            <option value="active">💪 高度活動（每週運動 6-7 天）</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">目標達成日期</label>
+                        <input type="date" id="p_target_date" class="field">
+                    </div>
+
+                    <button onclick="saveProfile()" class="w-full bg-gradient-to-r from-indigo-500 to-violet-500 text-white py-3.5 rounded-2xl font-bold text-base shadow-md hover:shadow-lg hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-200 mt-2">
+                        產生我的專屬計畫 ✨
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══════════════════ 儀表板 ══════════════════ -->
+        <div id="dashboardSection" class="hidden">
+
+            <!-- 標題列 -->
+            <div class="flex justify-between items-center mt-2 mb-4 px-1">
+                <div>
+                    <h2 class="text-xl font-black text-slate-800">今日總結</h2>
+                    <p class="text-xs text-slate-400 mt-0.5" id="todayDate"></p>
+                </div>
+            </div>
+
+            <!-- 目標洞察卡 -->
+            <div id="goalInsight" class="hidden bg-white rounded-2xl border border-indigo-100 p-5 mb-4 shadow-sm relative overflow-hidden">
+                <div class="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-indigo-400 to-violet-400 rounded-l-2xl"></div>
+            </div>
+
+            <!-- 熱量主卡 -->
+            <div class="login-deco rounded-3xl p-6 mb-4 shadow-lg text-white relative overflow-hidden">
+                <div class="absolute -right-8 -top-8 w-40 h-40 bg-white/10 rounded-full"></div>
+                <div class="absolute -left-6 -bottom-10 w-32 h-32 bg-black/10 rounded-full"></div>
+                <div class="relative z-10">
+                    <p class="text-emerald-100 text-xs font-semibold mb-2 tracking-wide uppercase">今日攝取熱量</p>
+                    <div class="flex items-baseline gap-2 mb-3">
+                        <span class="text-5xl font-black tabular-nums" id="totalCalories">0</span>
+                        <span class="text-emerald-200 text-base font-medium">/ <span id="targetCalories">—</span> kcal</span>
+                    </div>
+                    <!-- 進度條 -->
+                    <div class="calorie-bar-track">
+                        <div class="calorie-bar-fill" id="calorieBar" style="width:0%"></div>
+                    </div>
+                    <p class="text-emerald-200 text-xs mt-1.5 text-right" id="calorieBarLabel">0%</p>
+                </div>
+            </div>
+
+            <!-- 三大營養素 -->
+            <div class="grid grid-cols-3 gap-3 mb-4">
+                <div class="macro-protein bg-white rounded-2xl p-4 border shadow-sm card-hover text-center">
+                    <p class="text-blue-400 text-xs font-bold mb-1 uppercase tracking-wide">蛋白質</p>
+                    <p class="text-xl font-black text-slate-700"><span id="totalProtein">0</span><span class="text-xs text-slate-400 font-normal ml-0.5">g</span></p>
+                </div>
+                <div class="macro-carbs bg-white rounded-2xl p-4 border shadow-sm card-hover text-center">
+                    <p class="text-amber-500 text-xs font-bold mb-1 uppercase tracking-wide">碳水</p>
+                    <p class="text-xl font-black text-slate-700"><span id="totalCarbs">0</span><span class="text-xs text-slate-400 font-normal ml-0.5">g</span></p>
+                </div>
+                <div class="macro-fat bg-white rounded-2xl p-4 border shadow-sm card-hover text-center">
+                    <p class="text-orange-400 text-xs font-bold mb-1 uppercase tracking-wide">脂肪</p>
+                    <p class="text-xl font-black text-slate-700"><span id="totalFat">0</span><span class="text-xs text-slate-400 font-normal ml-0.5">g</span></p>
+                </div>
+            </div>
+
+            <!-- 頁籤導覽 -->
+            <div class="flex bg-white rounded-2xl shadow-sm p-1.5 mb-4 border border-slate-100 gap-1">
+                <button id="btn-diet" onclick="switchTab('diet')" class="tab-btn flex-1 py-2.5 text-sm font-bold rounded-xl bg-emerald-500 text-white transition-all">🍽️ 飲食</button>
+                <button id="btn-workout" onclick="switchTab('workout')" class="tab-btn flex-1 py-2.5 text-sm font-bold rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-all">💪 運動</button>
+                <button id="btn-body" onclick="switchTab('body')" class="tab-btn flex-1 py-2.5 text-sm font-bold rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-all">⚖️ 身體</button>
+                <button id="btn-progress" onclick="switchTab('progress')" class="tab-btn flex-1 py-2.5 text-sm font-bold rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-all">📊 進度</button>
+            </div>
+
+            <!-- TAB 1: 飲食紀錄 -->
+            <div id="tab-diet" class="tab-content active">
+                <div class="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+                    <!-- 卡片標題 -->
+                    <div class="flex items-center justify-between px-6 pt-5 pb-4 border-b border-slate-50">
+                        <h3 class="font-black text-slate-800 flex items-center gap-2">
+                            <span class="w-7 h-7 bg-teal-100 rounded-lg flex items-center justify-center text-sm">✍️</span>
+                            紀錄食物
+                        </h3>
+                        <div class="file-upload-wrapper bg-indigo-50 text-indigo-600 px-3.5 py-1.5 rounded-full text-xs font-bold hover:bg-indigo-100 active:scale-95 transition-all">
+                            <span id="aiBtnText">📸 AI 辨識</span>
+                            <input type="file" id="foodImage" accept="image/*" onchange="uploadImageForAI()">
+                        </div>
+                    </div>
+
+                    <div class="px-6 py-5 space-y-3">
+                        <!-- 食物名稱 -->
+                        <input type="text" id="foodName" placeholder="食物名稱（例：雞胸肉便當）" class="field">
+
+                        <!-- 餐別 + 熱量 -->
+                        <div class="flex gap-2">
+                            <select id="mealType" class="field w-1/2">
+                                <option value="breakfast">🌅 早餐</option>
+                                <option value="lunch" selected>☀️ 午餐</option>
+                                <option value="dinner">🌙 晚餐</option>
+                                <option value="snack">🍎 點心</option>
+                            </select>
+                            <input type="number" id="foodCalories" placeholder="熱量 (kcal)" class="field w-1/2 text-center">
+                        </div>
+
+                        <!-- 三大營養素 -->
+                        <div class="bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                            <p class="text-xs font-bold text-slate-400 mb-3 uppercase tracking-wide">三大營養素</p>
+                            <div class="grid grid-cols-3 gap-2">
+                                <div>
+                                    <label class="block text-xs font-semibold text-blue-500 mb-1.5 text-center">蛋白質 (g)</label>
+                                    <input type="number" id="foodProtein" placeholder="0" class="w-full bg-white border border-blue-100 rounded-xl p-2.5 text-center text-sm font-bold focus:ring-2 focus:ring-blue-300 outline-none transition-all" step="0.1">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-amber-500 mb-1.5 text-center">碳水 (g)</label>
+                                    <input type="number" id="foodCarbs" placeholder="0" class="w-full bg-white border border-amber-100 rounded-xl p-2.5 text-center text-sm font-bold focus:ring-2 focus:ring-amber-300 outline-none transition-all" step="0.1">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-orange-400 mb-1.5 text-center">脂肪 (g)</label>
+                                    <input type="number" id="foodFat" placeholder="0" class="w-full bg-white border border-orange-100 rounded-xl p-2.5 text-center text-sm font-bold focus:ring-2 focus:ring-orange-300 outline-none transition-all" step="0.1">
+                                </div>
+                            </div>
+                        </div>
+
+                        <button onclick="addFood()" class="w-full bg-gradient-to-r from-emerald-500 to-teal-500 text-white py-3.5 rounded-2xl font-bold text-base shadow hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-200">
+                            新增飲食紀錄
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 2: 運動紀錄 -->
+            <div id="tab-workout" class="tab-content">
+                <div class="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+                    <div class="relative h-32 overflow-hidden">
+                        <img src="https://images.unsplash.com/photo-1534438327276-14e5300c3a48?auto=format&fit=crop&w=800&q=80" class="w-full h-full object-cover" alt="workout">
+                        <div class="absolute inset-0 bg-gradient-to-b from-slate-900/30 to-slate-900/60 flex items-end px-6 pb-4">
+                            <h3 class="text-white font-black text-xl flex items-center gap-2">💪 今日訓練菜單</h3>
+                        </div>
+                    </div>
+                    <div class="px-6 py-5 space-y-4">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">主要訓練部位</label>
+                            <select id="workoutBodyPart" class="field">
+                                <option value="chest">🏋️ 胸部 (Chest)</option>
+                                <option value="back">🔙 背部 (Back)</option>
+                                <option value="legs">🦵 腿部 (Legs)</option>
+                                <option value="shoulders">🔼 肩部 (Shoulders)</option>
+                                <option value="arms">💪 手部 (Arms)</option>
+                                <option value="core">🌀 核心/腹部 (Core)</option>
+                                <option value="cardio_only">🏃 純有氧 (Cardio Only)</option>
+                                <option value="rest">😴 休息日 (Rest Day)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">有氧時間（分鐘）</label>
+                            <input type="number" id="workoutCardio" placeholder="0" class="field text-center text-xl font-bold">
+                        </div>
+                        <button onclick="addWorkout()" class="w-full bg-gradient-to-r from-blue-500 to-indigo-500 text-white py-3.5 rounded-2xl font-bold text-base shadow hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-200">
+                            儲存訓練紀錄
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 3: 身體數據 -->
+            <div id="tab-body" class="tab-content">
+                <div class="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+                    <div class="px-6 pt-5 pb-4 border-b border-slate-50 flex items-center gap-3">
+                        <div class="w-8 h-8 bg-purple-100 rounded-xl flex items-center justify-center text-base">⚖️</div>
+                        <div>
+                            <h3 class="font-black text-slate-800">身體數據紀錄</h3>
+                            <p class="text-xs text-slate-400">記錄今日測量結果</p>
+                        </div>
+                    </div>
+                    <div class="px-6 py-5 space-y-4">
+                        <div class="bg-purple-50 rounded-2xl p-4 border border-purple-100">
+                            <label class="block text-xs font-bold text-purple-500 mb-2 uppercase tracking-wide text-center">體重 (kg)</label>
+                            <input type="number" id="metricWeight" placeholder="70.5" class="w-full bg-white border border-purple-200 rounded-2xl py-3 text-center text-3xl font-black text-slate-700 focus:ring-2 focus:ring-purple-300 outline-none transition-all" step="0.1">
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">體脂率 (%)</label>
+                                <input type="number" id="metricFat" placeholder="18.5" class="field text-center font-bold" step="0.1">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wide">肌肉量 (kg)</label>
+                                <input type="number" id="metricMuscle" placeholder="32.0" class="field text-center font-bold" step="0.1">
+                            </div>
+                        </div>
+                        <button onclick="addMetric()" class="w-full bg-gradient-to-r from-purple-500 to-fuchsia-500 text-white py-3.5 rounded-2xl font-bold text-base shadow hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-200">
+                            儲存身體數據
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 4: 進度報告 -->
+            <div id="tab-progress" class="tab-content space-y-4">
+
+                <!-- 載入中佔位 -->
+                <div id="progressLoading" class="flex flex-col items-center justify-center py-16 text-slate-400">
+                    <div class="loader mb-3" style="width:32px;height:32px;border-width:3px;"></div>
+                    <p class="text-sm">載入進度資料中...</p>
+                </div>
+
+                <!-- 報告主體（資料載入後顯示） -->
+                <div id="progressReport" class="hidden space-y-4">
+
+                    <!-- InBody 風格：比較卡 -->
+                    <div class="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+                        <div class="bg-gradient-to-r from-slate-700 to-slate-800 px-6 py-4 text-white flex items-center justify-between">
+                            <div>
+                                <h3 class="font-black text-base tracking-wide">身體組成變化報告</h3>
+                                <p class="text-slate-400 text-xs mt-0.5" id="progressDateRange">—</p>
+                            </div>
+                            <div class="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center text-xl">📋</div>
+                        </div>
+
+                        <!-- 體重大數字 -->
+                        <div class="px-6 py-5 border-b border-slate-50">
+                            <p class="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3">體重變化</p>
+                            <div class="flex items-center justify-between">
+                                <div class="text-center">
+                                    <p class="text-xs text-slate-400 mb-1">起始</p>
+                                    <p class="text-3xl font-black text-slate-600" id="startWeight">—</p>
+                                    <p class="text-xs text-slate-400">kg</p>
+                                </div>
+                                <div class="flex-1 mx-4 flex flex-col items-center gap-1">
+                                    <div class="flex items-center gap-2 w-full">
+                                        <div class="h-px flex-1 bg-slate-200"></div>
+                                        <div id="weightDeltaBadge" class="px-3 py-1 rounded-full text-xs font-black"></div>
+                                        <div class="h-px flex-1 bg-slate-200"></div>
+                                    </div>
+                                    <p class="text-xs text-slate-400" id="progressDays">—</p>
+                                </div>
+                                <div class="text-center">
+                                    <p class="text-xs text-slate-400 mb-1">目前</p>
+                                    <p class="text-3xl font-black text-slate-800" id="currentWeight">—</p>
+                                    <p class="text-xs text-slate-400">kg</p>
+                                </div>
+                            </div>
+                            <!-- 目標進度條 -->
+                            <div class="mt-4">
+                                <div class="flex justify-between text-xs text-slate-400 mb-1">
+                                    <span>目標完成度</span>
+                                    <span id="goalProgressPct">0%</span>
+                                </div>
+                                <div class="bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                                    <div id="goalProgressBar" class="h-full rounded-full bg-gradient-to-r from-emerald-400 to-teal-500 transition-all duration-1000" style="width:0%"></div>
+                                </div>
+                                <div class="flex justify-between text-xs text-slate-400 mt-1">
+                                    <span id="goalStart">—</span>
+                                    <span class="text-indigo-500 font-bold" id="goalTarget">目標 —kg</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 體脂 & 肌肉 -->
+                        <div class="grid grid-cols-2 divide-x divide-slate-50">
+                            <div class="px-5 py-4">
+                                <p class="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3">體脂率</p>
+                                <div class="flex items-end justify-between mb-2">
+                                    <div>
+                                        <p class="text-xs text-slate-400">起始</p>
+                                        <p class="text-xl font-black text-slate-500" id="startFat">—</p>
+                                        <p class="text-xs text-slate-400">%</p>
+                                    </div>
+                                    <div id="fatDeltaBadge" class="text-xs font-black px-2 py-1 rounded-lg mb-1"></div>
+                                    <div class="text-right">
+                                        <p class="text-xs text-slate-400">目前</p>
+                                        <p class="text-xl font-black text-slate-800" id="currentFat">—</p>
+                                        <p class="text-xs text-slate-400">%</p>
+                                    </div>
+                                </div>
+                                <div class="bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                                    <div id="fatBar" class="h-full rounded-full bg-orange-400" style="width:0%"></div>
+                                </div>
+                            </div>
+                            <div class="px-5 py-4">
+                                <p class="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3">肌肉量</p>
+                                <div class="flex items-end justify-between mb-2">
+                                    <div>
+                                        <p class="text-xs text-slate-400">起始</p>
+                                        <p class="text-xl font-black text-slate-500" id="startMuscle">—</p>
+                                        <p class="text-xs text-slate-400">kg</p>
+                                    </div>
+                                    <div id="muscleDeltaBadge" class="text-xs font-black px-2 py-1 rounded-lg mb-1"></div>
+                                    <div class="text-right">
+                                        <p class="text-xs text-slate-400">目前</p>
+                                        <p class="text-xl font-black text-slate-800" id="currentMuscle">—</p>
+                                        <p class="text-xs text-slate-400">kg</p>
+                                    </div>
+                                </div>
+                                <div class="bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                                    <div id="muscleBar" class="h-full rounded-full bg-blue-400" style="width:0%"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 體重趨勢圖 -->
+                    <div class="bg-white rounded-3xl shadow-sm border border-slate-100 p-5">
+                        <h3 class="font-black text-slate-700 text-sm mb-4 flex items-center gap-2">
+                            <span class="w-6 h-6 bg-emerald-100 rounded-lg flex items-center justify-center text-xs">📈</span>
+                            體重趨勢
+                        </h3>
+                        <div class="relative h-48">
+                            <canvas id="weightChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- 歷史紀錄列表 -->
+                    <div class="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+                        <div class="px-5 py-4 border-b border-slate-50 flex items-center justify-between">
+                            <h3 class="font-black text-slate-700 text-sm flex items-center gap-2">
+                                <span class="w-6 h-6 bg-purple-100 rounded-lg flex items-center justify-center text-xs">🗓️</span>
+                                量測紀錄
+                            </h3>
+                            <span id="recordCount" class="text-xs text-slate-400 font-medium"></span>
+                        </div>
+                        <div id="metricHistoryList" class="divide-y divide-slate-50 max-h-72 overflow-y-auto"></div>
+                    </div>
+
+                    <!-- 無資料提示 -->
+                    <div id="noProgressData" class="hidden bg-white rounded-3xl shadow-sm border border-slate-100 p-10 text-center">
+                        <div class="text-5xl mb-3">⚖️</div>
+                        <p class="font-bold text-slate-600 mb-1">尚無量測紀錄</p>
+                        <p class="text-xs text-slate-400">前往「身體」頁籤記錄今日數據，進度就會出現在這裡！</p>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- end dashboardSection -->
+    </div><!-- end main container -->
+
+    <script>
+        const API_BASE = "http://127.0.0.1:8000/api";
+        let userProfileData = null;
+        let isLoginMode = true;
+        const getTodayDate = () => new Date().toISOString().split('T')[0];
+        document.getElementById('todayDate').innerText = new Date().toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' });
+
+        // Toast 通知
+        function showToast(msg, duration = 2500) {
+            const t = document.getElementById('toast');
+            t.innerText = msg;
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), duration);
+        }
+
+        window.onload = async () => {
+            if (localStorage.getItem("token")) {
+                await checkAuthAndProfile();
+            } else {
+                document.getElementById("globalLoader").classList.add("hidden");
+                document.getElementById("loginSection").classList.remove("hidden");
+            }
+        };
+
+        async function checkAuthAndProfile() {
+            const token = localStorage.getItem("token");
+            try {
+                const res = await fetch(`${API_BASE}/users/me`, {
+                    headers: { "Authorization": `Bearer ${token}` }
+                });
+                if (!res.ok) throw new Error("Token失效");
+                const user = await res.json();
+
+                if (!user.profile || !user.profile.daily_calorie_target) {
+                    document.getElementById("globalLoader").classList.add("hidden");
+                    document.getElementById("loginSection").classList.add("hidden");
+                    document.getElementById("profileSection").classList.remove("hidden");
+                    document.getElementById("logoutBtn").classList.remove("hidden");
+                } else {
+                    userProfileData = user.profile;
+                    document.getElementById("metricWeight").value = userProfileData.current_weight_kg;
+                    showDashboard();
+                }
+            } catch(e) {
+                logout();
+            }
+        }
+
+        function toggleAuthMode() {
+            isLoginMode = !isLoginMode;
+            document.getElementById("authTitle").innerText = isLoginMode ? "歡迎回來" : "建立新帳號";
+            document.getElementById("authBtn").innerText = isLoginMode ? "登入" : "立即註冊";
+            document.getElementById("toggleAuthBtn").innerText = isLoginMode ? "還沒有帳號？點此註冊" : "已有帳號？點此登入";
+            document.getElementById("loginError").classList.add("hidden");
+        }
+
+        async function submitAuth() {
+            if (isLoginMode) {
+                await login();
+            } else {
+                await register();
+            }
+        }
+
+        async function register() {
+            const email = document.getElementById("email").value;
+            const password = document.getElementById("password").value;
+            try {
+                const res = await fetch(`${API_BASE}/auth/register`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ email, password })
+                });
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.detail || "註冊失敗，請檢查格式或更換信箱");
+                }
+                await login();
+            } catch (err) {
+                const errElem = document.getElementById("loginError");
+                errElem.innerText = err.message;
+                errElem.classList.remove("hidden");
+            }
+        }
+
+        async function login() {
+            const email = document.getElementById("email").value;
+            const password = document.getElementById("password").value;
+
+            const formData = new URLSearchParams();
+            formData.append("username", email);
+            formData.append("password", password);
+
+            try {
+                const res = await fetch(`${API_BASE}/auth/login`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    body: formData
+                });
+                if (!res.ok) throw new Error("登入失敗");
+
+                const data = await res.json();
+                localStorage.setItem("token", data.access_token);
+                document.getElementById("loginError").classList.add("hidden");
+                document.getElementById("loginSection").classList.add("hidden");
+                document.getElementById("globalLoader").classList.remove("hidden");
+                checkAuthAndProfile();
+            } catch (err) {
+                const errElem = document.getElementById("loginError");
+                errElem.innerText = "登入失敗，請檢查帳號密碼。";
+                errElem.classList.remove("hidden");
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem("token");
+            document.getElementById("globalLoader").classList.add("hidden");
+            document.getElementById("heroImage").classList.add("hidden");
+            document.getElementById("loginSection").classList.remove("hidden");
+            document.getElementById("dashboardSection").classList.add("hidden");
+            document.getElementById("profileSection").classList.add("hidden");
+            document.getElementById("logoutBtn").classList.add("hidden");
+        }
+
+        async function saveProfile() {
+            const token = localStorage.getItem("token");
+            const body = {
+                gender: document.getElementById("p_gender").value,
+                birth_date: document.getElementById("p_birth").value,
+                height_cm: parseFloat(document.getElementById("p_height").value),
+                current_weight_kg: parseFloat(document.getElementById("p_weight").value),
+                target_weight_kg: parseFloat(document.getElementById("p_target").value),
+                activity_level: document.getElementById("p_activity").value,
+                target_date: document.getElementById("p_target_date").value
+            };
+
+            const res = await fetch(`${API_BASE}/users/me/profile`, {
+                method: "PUT",
+                headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+                body: JSON.stringify(body)
+            });
+            if (res.ok) checkAuthAndProfile();
+        }
+
+        async function showDashboard() {
+            document.getElementById("globalLoader").classList.add("hidden");
+            document.getElementById("loginSection").classList.add("hidden");
+            document.getElementById("heroImage").classList.remove("hidden");
+            document.getElementById("profileSection").classList.add("hidden");
+            document.getElementById("dashboardSection").classList.remove("hidden");
+            document.getElementById("logoutBtn").classList.remove("hidden");
+            fetchDashboard();
+            updateInsight();
+        }
+
+        function updateInsight() {
+            const diff = Math.abs(userProfileData.current_weight_kg - userProfileData.target_weight_kg);
+            const targetDate = new Date(userProfileData.target_date);
+            const today = new Date();
+            const days = Math.ceil((targetDate - today) / (1000 * 60 * 60 * 24));
+
+            const insightDiv = document.getElementById("goalInsight");
+            if (diff === 0 || isNaN(days) || days <= 0) {
+                insightDiv.innerHTML = `<div class="pl-3"><h3 class="font-bold text-indigo-700 flex items-center gap-1.5 text-sm"><span>💡</span> 專屬計畫</h3><p class="text-sm text-slate-600 mt-1.5 leading-relaxed">目標為維持 <b>${userProfileData.current_weight_kg} kg</b>，每日建議攝取 <b class="text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded-lg">${userProfileData.daily_calorie_target} 大卡</b>！</p></div>`;
+            } else {
+                const isLosing = userProfileData.current_weight_kg > userProfileData.target_weight_kg;
+                const action = isLosing ? '減去' : '增加';
+                const dailyDeficit = (diff * 7700) / days;
+
+                let difficultyMsg = "";
+                let badgeClass = "text-emerald-700 bg-emerald-50 border border-emerald-200";
+
+                if (isLosing) {
+                    if (dailyDeficit > 1000) {
+                        difficultyMsg = "⚠️ 警告：目標過激，可能危害健康，強烈建議延後日期。";
+                        badgeClass = "text-red-700 bg-red-50 border border-red-200";
+                    } else if (dailyDeficit > 500) {
+                        difficultyMsg = "🔥 難度較高：需要嚴格飲食控制與規律運動。";
+                        badgeClass = "text-orange-700 bg-orange-50 border border-orange-200";
+                    } else {
+                        difficultyMsg = "✅ 合理計畫：穩紮穩打，容易長期堅持！";
+                    }
+                } else {
+                    difficultyMsg = dailyDeficit > 500 ? "💪 增肌挑戰：需要大量進食與高強度訓練！" : "✅ 穩定增肌：適合穩步累積肌肉質量。";
+                }
+
+                insightDiv.innerHTML = `<div class="pl-3"><h3 class="font-bold text-indigo-700 flex items-center gap-1.5 text-sm"><span>💡</span> 專屬計畫分析</h3><p class="text-sm text-slate-600 mt-1.5 leading-relaxed">為了在 <b class="text-slate-800">${days} 天</b> 內${action} <b class="text-slate-800">${diff.toFixed(1)} kg</b>，每日建議攝取 <b class="text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded-lg">${userProfileData.daily_calorie_target} 大卡</b>。</p><div class="mt-2.5 px-3 py-2 rounded-xl text-xs font-bold ${badgeClass}">${difficultyMsg}</div></div>`;
+            }
+            insightDiv.classList.remove("hidden");
+        }
+
+        async function fetchDashboard() {
+            const token = localStorage.getItem("token");
+            const date = getTodayDate();
+            const res = await fetch(`${API_BASE}/dashboard/${date}`, {
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+            const data = await res.json();
+
+            const consumed = data.total_calories || 0;
+            const target = data.target_calories || userProfileData.daily_calorie_target || 1;
+            const pct = Math.min(Math.round((consumed / target) * 100), 100);
+
+            document.getElementById("totalCalories").innerText = consumed;
+            document.getElementById("targetCalories").innerText = target;
+            document.getElementById("totalProtein").innerText = data.total_protein;
+            document.getElementById("totalCarbs").innerText = data.total_carbs;
+            document.getElementById("totalFat").innerText = data.total_fat;
+            document.getElementById("calorieBar").style.width = pct + "%";
+            document.getElementById("calorieBarLabel").innerText = pct + "%";
+        }
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.getElementById(`tab-${tabId}`).classList.add('active');
+
+            document.querySelectorAll('.tab-btn').forEach(el => {
+                el.classList.remove('bg-emerald-500', 'text-white');
+                el.classList.add('text-slate-400');
+            });
+            const activeBtn = document.getElementById(`btn-${tabId}`);
+            activeBtn.classList.remove('text-slate-400');
+            activeBtn.classList.add('bg-emerald-500', 'text-white');
+
+            if (tabId === 'progress') fetchProgressReport();
+        }
+
+        let weightChartInstance = null;
+
+        async function fetchProgressReport() {
+            document.getElementById('progressLoading').classList.remove('hidden');
+            document.getElementById('progressReport').classList.add('hidden');
+
+            const token = localStorage.getItem('token');
+            const res = await fetch(`${API_BASE}/metrics`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const records = await res.json();
+
+            document.getElementById('progressLoading').classList.add('hidden');
+            document.getElementById('progressReport').classList.remove('hidden');
+
+            if (!records || records.length === 0) {
+                document.getElementById('noProgressData').classList.remove('hidden');
+                return;
+            }
+            document.getElementById('noProgressData').classList.add('hidden');
+
+            // records 已按日期降序，最舊在最後
+            const latest = records[0];
+            const oldest = records[records.length - 1];
+            const daysDiff = Math.round((new Date(latest.record_date) - new Date(oldest.record_date)) / 86400000);
+
+            // 日期範圍
+            document.getElementById('progressDateRange').innerText =
+                `${oldest.record_date} ～ ${latest.record_date}`;
+            document.getElementById('progressDays').innerText =
+                daysDiff > 0 ? `歷時 ${daysDiff} 天` : '今日首次記錄';
+            document.getElementById('recordCount').innerText = `共 ${records.length} 筆`;
+
+            // 體重
+            const wDelta = (latest.weight_kg - oldest.weight_kg).toFixed(1);
+            document.getElementById('startWeight').innerText = oldest.weight_kg.toFixed(1);
+            document.getElementById('currentWeight').innerText = latest.weight_kg.toFixed(1);
+            const wBadge = document.getElementById('weightDeltaBadge');
+            const wDown = parseFloat(wDelta) < 0;
+            const wUp = parseFloat(wDelta) > 0;
+            wBadge.innerText = (wDown ? '▼ ' : wUp ? '▲ ' : '') + Math.abs(wDelta) + ' kg';
+            wBadge.className = `px-3 py-1 rounded-full text-xs font-black ${wDown ? 'bg-emerald-100 text-emerald-700' : wUp ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-500'}`;
+
+            // 目標進度條
+            if (userProfileData && userProfileData.target_weight_kg) {
+                const goalStart = oldest.weight_kg;
+                const goalTarget = userProfileData.target_weight_kg;
+                const totalChange = Math.abs(goalStart - goalTarget);
+                const actualChange = Math.abs(goalStart - latest.weight_kg);
+                const pct = totalChange > 0 ? Math.min(Math.round((actualChange / totalChange) * 100), 100) : 100;
+                document.getElementById('goalProgressPct').innerText = pct + '%';
+                document.getElementById('goalProgressBar').style.width = pct + '%';
+                document.getElementById('goalStart').innerText = goalStart.toFixed(1) + ' kg';
+                document.getElementById('goalTarget').innerText = `目標 ${goalTarget} kg`;
+            }
+
+            // 體脂
+            const hasFat = oldest.body_fat_percent != null && latest.body_fat_percent != null;
+            if (hasFat) {
+                const fDelta = (latest.body_fat_percent - oldest.body_fat_percent).toFixed(1);
+                document.getElementById('startFat').innerText = oldest.body_fat_percent.toFixed(1);
+                document.getElementById('currentFat').innerText = latest.body_fat_percent.toFixed(1);
+                const fBadge = document.getElementById('fatDeltaBadge');
+                const fDown = parseFloat(fDelta) < 0;
+                fBadge.innerText = (fDown ? '▼ ' : '▲ ') + Math.abs(fDelta) + '%';
+                fBadge.className = `text-xs font-black px-2 py-1 rounded-lg ${fDown ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`;
+                document.getElementById('fatBar').style.width = Math.min(latest.body_fat_percent, 40) / 40 * 100 + '%';
+            } else {
+                document.getElementById('startFat').innerText = '—';
+                document.getElementById('currentFat').innerText = '—';
+            }
+
+            // 肌肉
+            const hasMuscle = oldest.muscle_mass_kg != null && latest.muscle_mass_kg != null;
+            if (hasMuscle) {
+                const mDelta = (latest.muscle_mass_kg - oldest.muscle_mass_kg).toFixed(1);
+                document.getElementById('startMuscle').innerText = oldest.muscle_mass_kg.toFixed(1);
+                document.getElementById('currentMuscle').innerText = latest.muscle_mass_kg.toFixed(1);
+                const mBadge = document.getElementById('muscleDeltaBadge');
+                const mUp = parseFloat(mDelta) > 0;
+                mBadge.innerText = (mUp ? '▲ ' : '▼ ') + Math.abs(mDelta) + ' kg';
+                mBadge.className = `text-xs font-black px-2 py-1 rounded-lg ${mUp ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-600'}`;
+                document.getElementById('muscleBar').style.width = Math.min(latest.muscle_mass_kg, 60) / 60 * 100 + '%';
+            } else {
+                document.getElementById('startMuscle').innerText = '—';
+                document.getElementById('currentMuscle').innerText = '—';
+            }
+
+            // 折線圖（時序由舊到新）
+            const sorted = [...records].reverse();
+            const labels = sorted.map(r => r.record_date.slice(5));
+            const weights = sorted.map(r => r.weight_kg);
+
+            if (weightChartInstance) weightChartInstance.destroy();
+            const ctx = document.getElementById('weightChart').getContext('2d');
+            weightChartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: '體重 (kg)',
+                        data: weights,
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16,185,129,0.08)',
+                        borderWidth: 2.5,
+                        pointBackgroundColor: '#10b981',
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#94a3b8' } },
+                        y: {
+                            grid: { color: '#f1f5f9' },
+                            ticks: { font: { size: 10 }, color: '#94a3b8' },
+                            suggestedMin: Math.min(...weights) - 2,
+                            suggestedMax: Math.max(...weights) + 2
+                        }
+                    }
+                }
+            });
+
+            // 歷史紀錄列表
+            const listEl = document.getElementById('metricHistoryList');
+            listEl.innerHTML = records.map((r, i) => {
+                const isLatest = i === 0;
+                const fat = r.body_fat_percent != null ? `體脂 <b>${r.body_fat_percent}%</b>` : '';
+                const muscle = r.muscle_mass_kg != null ? `肌肉 <b>${r.muscle_mass_kg}kg</b>` : '';
+                const extras = [fat, muscle].filter(Boolean).join('　');
+                return `<div class="flex items-center justify-between px-5 py-3.5 ${isLatest ? 'bg-emerald-50' : ''}">
+                    <div class="flex items-center gap-3">
+                        <div class="w-2 h-2 rounded-full ${isLatest ? 'bg-emerald-500' : 'bg-slate-300'}"></div>
+                        <div>
+                            <p class="text-sm font-bold text-slate-700">${r.record_date} ${isLatest ? '<span class="text-xs text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded-full ml-1">最新</span>' : ''}</p>
+                            ${extras ? `<p class="text-xs text-slate-400 mt-0.5">${extras}</p>` : ''}
+                        </div>
+                    </div>
+                    <p class="text-xl font-black text-slate-800">${r.weight_kg}<span class="text-xs text-slate-400 font-normal ml-0.5">kg</span></p>
+                </div>`;
+            }).join('');
+        }
+
+        async function uploadImageForAI() {
+            const fileInput = document.getElementById("foodImage");
+            if (!fileInput.files[0]) return;
+
+            const token = localStorage.getItem("token");
+            const formData = new FormData();
+            formData.append("file", fileInput.files[0]);
+
+            document.getElementById("aiBtnText").innerText = "⏳ 辨識中...";
+            try {
+                const res = await fetch(`${API_BASE}/ai/analyze-food-image`, {
+                    method: "POST",
+                    headers: { "Authorization": `Bearer ${token}` },
+                    body: formData
+                });
+                const data = await res.json();
+                document.getElementById("foodName").value = data.food_name;
+                document.getElementById("foodCalories").value = data.calories;
+                showToast("✅ AI 辨識完成！");
+            } catch(e) {
+                showToast("❌ 圖片辨識失敗，請稍後再試。");
+            } finally {
+                document.getElementById("aiBtnText").innerText = "📸 AI 辨識";
+            }
+        }
+
+        async function addFood() {
+            const token = localStorage.getItem("token");
+            const date = getTodayDate();
+            const name = document.getElementById("foodName").value.trim();
+            if (!name) { showToast("⚠️ 請填寫食物名稱"); return; }
+
+            const body = {
+                food_name: name,
+                meal_type: document.getElementById("mealType").value,
+                calories: parseFloat(document.getElementById("foodCalories").value) || 0,
+                protein: parseFloat(document.getElementById("foodProtein").value) || 0,
+                carbs: parseFloat(document.getElementById("foodCarbs").value) || 0,
+                fat: parseFloat(document.getElementById("foodFat").value) || 0
+            };
+            await fetch(`${API_BASE}/entries/${date}/food-items`, {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+                body: JSON.stringify(body)
+            });
+            ["foodName","foodCalories","foodProtein","foodCarbs","foodFat"].forEach(id => document.getElementById(id).value = "");
+            showToast("🍽️ 飲食紀錄已新增！");
+            fetchDashboard();
+        }
+
+        async function addWorkout() {
+            const token = localStorage.getItem("token");
+            const body = {
+                record_date: getTodayDate(),
+                body_part: document.getElementById("workoutBodyPart").value,
+                cardio_minutes: parseInt(document.getElementById("workoutCardio").value) || 0
+            };
+            await fetch(`${API_BASE}/workouts`, {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+                body: JSON.stringify(body)
+            });
+            document.getElementById("workoutCardio").value = "";
+            showToast("💪 訓練紀錄已儲存！");
+        }
+
+        async function addMetric() {
+            const token = localStorage.getItem("token");
+            const body = {
+                record_date: getTodayDate(),
+                weight_kg: parseFloat(document.getElementById("metricWeight").value),
+                body_fat_percent: parseFloat(document.getElementById("metricFat").value) || null,
+                muscle_mass_kg: parseFloat(document.getElementById("metricMuscle").value) || null
+            };
+            await fetch(`${API_BASE}/metrics`, {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+                body: JSON.stringify(body)
+            });
+            showToast("✅ 身體數據已儲存！");
+            checkAuthAndProfile();
+        }
+    </script>
+</body>
+</html>
